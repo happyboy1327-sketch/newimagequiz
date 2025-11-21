@@ -4,25 +4,33 @@
     {
       "src": "server.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
     }
   ],
-  "rewrites": [
+  "functions": {
+    "server.js": {
+      "maxDuration": 75
+    }
+  },
+  "routes": [
     {
-      "source": "/api/quiz",
-      "destination": "/server.js"
+      "src": "/api/quiz",
+      "dest": "/server.js"
     },
     {
-      "source": "/api/quiz/(.*)",
-      "destination": "/server.js"
+      "src": "/api/quiz/(.*)",
+      "dest": "/server.js"
     },
     {
-      "source": "/",
-      "destination": "/public/index.html"
+      "src": "/",
+      "dest": "/public/index.html"
     },
-  
     {
-      "source": "/(.*)",
-      "destination": "/public/$1"
+      "src": "/(.*)",
+      "dest": "/public/$1"
     }
   ]
 }
