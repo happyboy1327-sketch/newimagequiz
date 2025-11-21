@@ -3,10 +3,8 @@ import path from "path";
 import axios from "axios";
 import dotenv from "dotenv";
 
-// 💡 NOTE: Vercel 환경에서는 dotenv 없이 .env 파일을 자동으로 로드합니다.
 dotenv.config();
 const app = express();
-// Vercel 환경에서는 PORT가 환경변수로 설정됩니다.
 const PORT = process.env.PORT || 3000; 
 
 // 🔥 [보안/성능 개선] Express 관련 헤더 설정
@@ -60,8 +58,7 @@ async function checkUrlStability(url) {
       });
       
       const contentType = res.headers['content-type'] || '';
-      // 200 OK이면서 콘텐츠 타입이 이미지여야 통과
-      if (res.status !== 200 || !contentType.includes('image')) { 
+      if (res.status !== 200 || !contentType.includes('image')) {
         return false;
       }
       await new Promise(r => setTimeout(r, 100));
@@ -72,12 +69,10 @@ async function checkUrlStability(url) {
   return true;
 }
 
-// --- 공통 힌트 마스킹 함수 (🔥 영어/외국어 잔여물 완전 제거 로직) ---
+// --- 공통 힌트 마스킹 함수 ---
 function createMaskedHint(title, extract) {
     let hintText = extract;
     const cleanTitle = title.trim();
-
-    // 1. 괄호 안의 내용(주로 외국어 이름) 마스킹
     const parenMatch = cleanTitle.match(/\((.*?)\)/);
     if (parenMatch) {
         const parenContent = parenMatch[1]; 
@@ -88,16 +83,11 @@ function createMaskedHint(title, extract) {
             }
         });
     }
-
-    // 2. 괄호 밖의 이름 구성 요소 (주로 한국어 이름) 마스킹
     const baseName = cleanTitle.replace(/\s*\(.*?\)\s*/g, ''); 
-    
     const nameParts = baseName.split(' ');
-    
     nameParts.forEach(word => {
         if (word.length >= 2) {
             hintText = hintText.replace(new RegExp(word, 'gi'), "OOO");
-            
             if (word.length >= 3 && !/\s/.test(word)) { 
                 for(let i = 0; i <= word.length - 2; i++) {
                     const chunk = word.substring(i, i + 2);
@@ -106,11 +96,8 @@ function createMaskedHint(title, extract) {
             }
         }
     });
-
-    // 🌟 3. [최종 안전 장치] 힌트 본문에 남아있는 모든 영어/외국어 알파벳 덩어리 및 발음 기호 제거
     hintText = hintText.replace(/([a-zA-Z\d\.\,\:\-\s'\[\]\/\(\)ˌˈɛɔ]+)/g, (match, p1) => {
         const cleanedMatch = p1.trim();
-        // 2글자 이상이고, 최소한 하나의 알파벳을 포함하는 덩어리만 OOO으로 대체
         if (cleanedMatch.length > 1 && /[a-zA-Z]/.test(cleanedMatch)) {
             return "OOO";
         }
@@ -130,8 +117,9 @@ async function fillCache() {
 
   try {
     
-    // 1. 유명 위인 시도 (Legacy Names) 
+    // 1. 유명 위인 시도
     if (QUIZ_CACHE.length < CACHE_SIZE) {
+        // ... (유명 위인 로직은 이전과 동일하게 유지)
         process.stdout.write(`[유명인] 검색 시도... `);
         const famousCandidates = LEGACY_NAMES
             .sort(() => Math.random() - 0.5) 
@@ -149,22 +137,14 @@ async function fillCache() {
             if (!pages) continue;
             const pageData = Object.values(pages)[0];
 
-            // [유명인 필터]: 30자 필터 유지
             if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 30) {
                 const imgUrl = pageData.thumbnail.source;
                 const isStable = await checkUrlStability(imgUrl);
                 
                 if (isStable) {
                     console.log(`✅ [유명인] ${pickName} 통과.`);
-                    
                     const maskedHint = createMaskedHint(pageData.title, pageData.extract);
-
-                    QUIZ_CACHE.push({
-                        name: pageData.title,
-                        image: imgUrl,
-                        hint: maskedHint,
-                        description: pageData.extract
-                    });
+                    QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
                 } else {
                     console.log(`❌ [유명인] ${pickName} 이미지 검증 실패.`);
                 }
@@ -172,10 +152,11 @@ async function fillCache() {
         }
     }
 
-    // 2. 랜덤 연도 탐색 (Random Year) 
+    // 2. 랜덤 연도 탐색 
     let randomSearchAttempts = 0;
     while (QUIZ_CACHE.length < CACHE_SIZE && randomSearchAttempts < 3) { 
-        const year = Math.floor(Math.random() * (1940 - 500 + 1)) + 500;
+        // 🌟 [수정 완료] 탐색 연도 범위: 500년 ~ 1940년
+        const year = Math.floor(Math.random() * (1940 - 500 + 1)) + 500; 
         process.stdout.write(`[랜덤] ${year}년도 탐색... `);
         
         const listRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
@@ -187,7 +168,6 @@ async function fillCache() {
 
         for (const cand of candidates.slice(0, 10)) { 
             if (QUIZ_CACHE.length >= CACHE_SIZE) break;
-            // 🌟 [추가/강화됨] 비인물 항목 필터링
             if (/\(.*\)|목록|분류|선수|배우|가수|작가|기업|작품|드라마|영화|앨범|만화/.test(cand.title)) continue; 
 
             const detailRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
@@ -199,22 +179,14 @@ async function fillCache() {
             if (!pages) continue;
             const pageData = Object.values(pages)[0];
 
-            // 🌟 [수정됨] 지엽적 인물을 거르기 위해 필터를 150자 -> 300자로 상향
             if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 300) { 
                 const imgUrl = pageData.thumbnail.source;
                 const isStable = await checkUrlStability(imgUrl);
                 
                 if (isStable) {
                     console.log(`✅ [랜덤] ${pageData.title} 통과.`);
-                    
                     const maskedHint = createMaskedHint(pageData.title, pageData.extract);
-
-                    QUIZ_CACHE.push({
-                        name: pageData.title,
-                        image: imgUrl,
-                        hint: maskedHint,
-                        description: pageData.extract
-                    });
+                    QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
                 } else {
                     console.log(`❌ [랜덤] ${pageData.title} 이미지 검증 실패.`);
                 }
@@ -235,39 +207,45 @@ fillCache();
 
 // --- API ---
 app.get("/api/quiz", async (req, res) => {
-  if (callCount >= DAILY_LIMIT) return res.status(429).json({ error: "오늘 호출 한도 초과" });
+  try { // 🌟 CRITICAL FIX: 전체 API 로직을 try/catch로 감싸서 500 에러 발생 시 JSON 응답 보장
+    if (callCount >= DAILY_LIMIT) {
+      return res.status(429).json({ error: "오늘 호출 한도 초과" });
+    }
   
-  const sessionId = req.query.sessionId || `session_${Date.now()}_${Math.random()}`;
-  callCount++;
-  sessionCounts[sessionId] = (sessionCounts[sessionId] || 0) + 1; 
+    const sessionId = req.query.sessionId || `session_${Date.now()}_${Math.random()}`;
+    callCount++;
+    sessionCounts[sessionId] = (sessionCounts[sessionId] || 0) + 1; 
 
-  if (QUIZ_CACHE.length === 0) await fillCache();
+    if (QUIZ_CACHE.length === 0) await fillCache();
   
-  const item = QUIZ_CACHE.shift();
+    const item = QUIZ_CACHE.shift();
   
-  if (!item) {
-        fillCache(); 
-        return res.status(503).json({ error: "데이터 준비 중입니다. 잠시만 기다려주세요." });
-    }
+    if (!item) {
+        fillCache(); 
+        // 퀴즈 데이터가 없으면 JSON 형식의 503 응답
+        return res.status(503).json({ error: "데이터 준비 중입니다. 잠시만 기다려주세요." });
+    }
 
-  if (QUIZ_CACHE.length < CACHE_SIZE / 2) fillCache();
+    if (QUIZ_CACHE.length < CACHE_SIZE / 2) fillCache();
 
-  res.json({ 
-    ...item, 
-    imageUrl: item.image, 
-    remaining: DAILY_LIMIT - callCount, 
-    questionNumber: sessionCounts[sessionId],
-    sessionId 
-});
+    res.json({ 
+      ...item, 
+      imageUrl: item.image, 
+      remaining: DAILY_LIMIT - callCount, 
+      questionNumber: sessionCounts[sessionId],
+      sessionId 
+    });
+
+  } catch (error) {
+    console.error("API 퀴즈 처리 중 심각한 오류 발생:", error);
+    // 예상치 못한 오류 발생 시 JSON 형식의 500 응답
+    res.status(500).json({ error: "서버 내부 오류로 퀴즈를 불러올 수 없습니다." });
+  }
 });
 
 // --- 정적 ---
-// Vercel 환경에서 public 폴더 내의 정적 파일 경로를 올바르게 처리하도록 수정합니다.
+// Vercel의 routes 설정이 정적 파일을 처리하므로 로컬 테스트용으로만 유지
 app.use(express.static(path.join(process.cwd(), "public")));
-
-// Vercel에서 루트 경로('/') 요청 시 public/index.html 파일을 응답하도록 설정합니다.
 app.get("/", (req, res) => res.sendFile(path.join(process.cwd(), "public", "index.html")));
 
-// Vercel 서버리스 환경에서는 이 listen 코드가 실제 동작하지 않을 수 있지만, 
-// 로컬 테스트를 위해 유지하며, Vercel은 이 파일을 서버리스 함수로 래핑합니다.
-//app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));//
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
