@@ -10,11 +10,6 @@
       "use": "@vercel/static"
     }
   ],
-  "functions": {
-    "server.js": {
-      "maxDuration": 75
-    }
-  },
   "routes": [
     {
       "src": "/api/quiz",
