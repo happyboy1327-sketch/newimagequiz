@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>랜덤 위인 퀴즈</title>
+<style>
+  body{font-family:'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; display:flex; justify-content:center; align-items:center; min-height:100vh; background:#f0f2f5; margin:0;}
+  .card{width:90%; max-width:420px; background:#fff; border-radius:16px; padding:24px; text-align:center; box-shadow:0 8px 24px rgba(0,0,0,0.1);}
+  
+  /* 이미지 영역 */
+  .img-box {width:100%; height:320px; margin-bottom:16px; border-radius:12px; background:#f8f9fa; overflow:hidden; position:relative;}
+  img {width:100%; height:100%; object-fit:contain; display:block;}
+  
+  #hint {margin:12px 0; font-size:0.95rem; color:#495057; background:#e9ecef; padding:12px; border-radius:8px; line-height:1.5; word-break:keep-all;}
+  
+  input {width:100%; padding:14px; margin-bottom:12px; border-radius:8px; border:1px solid #ced4da; font-size:1rem; box-sizing:border-box; outline:none;}
+  input:focus {border-color:#4c6ef5; box-shadow:0 0 0 3px rgba(76,110,245,0.2);}
+  
+  .btn-group {display:flex; gap:8px;}
+  button {flex:1; padding:14px; border:none; border-radius:8px; font-weight:700; cursor:pointer; font-size:1rem; color:#fff;}
+  #checkBtn {background:#4c6ef5;}
+  #checkBtn:hover {background:#3b5bdb;}
+  #reloadBtn {background:#868e96;}
+  #reloadBtn:hover {background:#495057;}
+  button:disabled {background:#dee2e6; cursor:not-allowed;}
+  
+  #timer {font-weight:800; color:#fa5252; margin-bottom:8px; font-size:1.4rem;}
+  #remaining {font-size:0.85rem; color:#adb5bd; margin-bottom:20px;}
+  
+  #result {margin-top:20px; text-align:left;}
+  .res-header {font-size:1.2rem; font-weight:800; margin-bottom:8px; text-align:center;}
+  .desc-box {font-size:0.9rem; color:#343a40; background:#f1f3f5; padding:12px; border-radius:8px; line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>랜덤 위인 퀴즈</h2>
+  <div id="timer">15s</div>
+  
+  <div class="img-box">
+    <img id="person-img" src="" alt="위인 이미지" referrerpolicy="no-referrer">
+  </div>
+  
+  <div id="hint">데이터 검증 및 수신 중...</div>
+  <div id="remaining"></div>
+  
+  <input id="answer" placeholder="정답 입력" autocomplete="off">
+  
+  <div class="btn-group">
+    <button id="checkBtn">정답 확인</button>
+    <button id="reloadBtn">다음 문제</button>
+  </div>
+  
+  <div id="result"></div>
+</div>
+
+<script>
+let sessionId = localStorage.getItem('sessionId') || `session_${Date.now()}`;
+localStorage.setItem('sessionId', sessionId);
+
+let currentData = null, timer = null, timeLeft = 15;
+
+// 투명 이미지 (로딩용)
+const LOADING_IMG = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+
+async function loadQuiz(){
+  clearInterval(timer);
+  document.getElementById('result').innerHTML = "";
+  document.getElementById('answer').value = "";
+  document.getElementById('answer').focus();
+  document.getElementById('checkBtn').disabled = true;
+  
+  const img = document.getElementById('person-img');
+  img.src = LOADING_IMG;
+  
+  document.getElementById('hint').textContent = "최적의 이미지를 선별하고 있습니다...";
+  timeLeft = 15;
+  document.getElementById('timer').textContent = `${timeLeft}s`;
+
+  try{
+    const res = await fetch(`/api/quiz?sessionId=${sessionId}`);
+    if(res.status === 503) {
+        document.getElementById('hint').textContent = "서버가 좋은 이미지를 찾고 있습니다. 잠시 후 '다음 문제'를 눌러주세요.";
+        document.getElementById('reloadBtn').disabled = false;
+        return;
+    }
+    
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+
+    currentData = data;
+    img.src = data.image;
+    document.getElementById('hint').textContent = data.hint;
+    document.getElementById('remaining').textContent = `오늘 남은 호출: ${data.remaining}`;
+    
+    document.getElementById('checkBtn').disabled = false;
+    startTimer();
+
+  }catch(e){
+    console.error(e);
+    document.getElementById('hint').textContent = "오류가 발생했습니다.";
+  }
+}
+
+function startTimer(){
+  timer = setInterval(()=>{
+    timeLeft--;
+    document.getElementById('timer').textContent = `${timeLeft}s`;
+    if(timeLeft <= 0){
+      clearInterval(timer);
+      showResult(false, true);
+    }
+  }, 1000);
+}
+
+function showResult(isCorrect, isTimeout=false){
+  clearInterval(timer);
+  document.getElementById('checkBtn').disabled = true;
+  
+  const color = isCorrect ? "#40c057" : "#fa5252";
+  const title = isTimeout ? "⏰ 시간 초과" : (isCorrect ? "🎉 정답!" : "❌ 땡!");
+  
+  document.getElementById('result').innerHTML = `
+    <div class="res-header" style="color:${color}">${title}</div>
+    <div class="res-header">${currentData.name}</div>
+    <div class="desc-box">${currentData.description}</div>
+  `;
+}
+
+document.getElementById('checkBtn').addEventListener('click', ()=>{
+  if(!currentData) return;
+  const user = document.getElementById('answer').value.replace(/\s+/g,'').trim();
+  const correct = currentData.name.replace(/\s+/g,'').trim();
+  if(!user) return alert("답을 입력하세요");
+  showResult(user === correct);
+});
+
+document.getElementById('reloadBtn').addEventListener('click', loadQuiz);
+document.getElementById('answer').addEventListener('keydown', e=>{ if(e.key==="Enter") document.getElementById('checkBtn').click(); });
+
+window.addEventListener('load', loadQuiz);
+</script>
+</body>
+</html>
