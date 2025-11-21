@@ -29,7 +29,7 @@ const DAILY_LIMIT = 1000;
 // --- 기존 퀴즈풀의 유명 인물 리스트 (검색 우선순위) ---
 const LEGACY_NAMES = [
   "이순신", "세종대왕", "알베르트 아인슈타인", "에이브러햄 링컨", "마하트마 간디",
-  "유관순", "안중근", "김구", "윤동주", "레오나르도 다 빈치", "윤봉길", "아리스토텔레스",
+  "유관순", "안중근", "김구", "윤동주", "레오나르도 다 빈치", "윤봉길", "아리스토텔레스", "갈릴레오 갈릴레이",
   "미켈란젤로 부오나로티", "빈센트 반 고흐", "파블로 피카소", "아이작 뉴턴", "찰스 다윈",
   "토머스 에디슨", "니콜라 테슬라", "스티브 잡스", "빌 게이츠", "마리 퀴리",
   "루트비히 판 베토벤", "볼프강 아마데우스 모차르트", "윌리엄 셰익스피어", "나폴레옹 보나파르트",
@@ -38,8 +38,10 @@ const LEGACY_NAMES = [
 
 let QUIZ_CACHE = [];
 let isCaching = false;
-let sessionCounts = {};
+// 🌟 [수정] 세션 카운트 대신 요청 카운트만 유지
 let callCount = 0;
+// 🌟 [수정] 캐싱 작업의 Promise를 저장할 변수
+let cachePromise = null; 
 
 const WIKI_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -113,117 +115,124 @@ async function fillCache() {
   if (isCaching || QUIZ_CACHE.length >= CACHE_SIZE) return;
   isCaching = true;
 
-  console.log("⛏️ 데이터 채굴 시작...");
+  cachePromise = new Promise(async (resolve) => { 
+      console.log("⛏️ 데이터 채굴 시작...");
 
-  try {
-    
-    // 1. 유명 위인 시도
-    if (QUIZ_CACHE.length < CACHE_SIZE) {
-        // ... (유명 위인 로직은 이전과 동일하게 유지)
-        process.stdout.write(`[유명인] 검색 시도... `);
-        const famousCandidates = LEGACY_NAMES
-            .sort(() => Math.random() - 0.5) 
-            .slice(0, 5); 
+      try {
+          
+          // 1. 유명 위인 시도
+          if (QUIZ_CACHE.length < CACHE_SIZE) {
+              process.stdout.write(`[유명인] 검색 시도... `);
+              const famousCandidates = LEGACY_NAMES.sort(() => Math.random() - 0.5).slice(0, 5); 
 
-        for (const pickName of famousCandidates) {
-            if (QUIZ_CACHE.length >= CACHE_SIZE) break;
+              for (const pickName of famousCandidates) {
+                  if (QUIZ_CACHE.length >= CACHE_SIZE) break;
+                  const detailRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
+                      headers: WIKI_HEADERS,
+                      params: { action: "query", titles: pickName, prop: "pageimages|extracts", pithumbsize: 500, exintro: true, explaintext: true, format: "json", origin: "*" }
+                  });
+                  const pages = detailRes.data.query?.pages;
+                  if (!pages) continue;
+                  const pageData = Object.values(pages)[0];
+                  if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 30) {
+                      const imgUrl = pageData.thumbnail.source;
+                      const isStable = await checkUrlStability(imgUrl);
+                      if (isStable) {
+                          console.log(`✅ [유명인] ${pickName} 통과.`);
+                          const maskedHint = createMaskedHint(pageData.title, pageData.extract);
+                          QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
+                      } else {
+                          console.log(`❌ [유명인] ${pickName} 이미지 검증 실패.`);
+                      }
+                  }
+              }
+          }
 
-            const detailRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
-                headers: WIKI_HEADERS,
-                params: { action: "query", titles: pickName, prop: "pageimages|extracts", pithumbsize: 500, exintro: true, explaintext: true, format: "json", origin: "*" }
-            });
+          // 2. 랜덤 연도 탐색 
+          let randomSearchAttempts = 0;
+          while (QUIZ_CACHE.length < CACHE_SIZE && randomSearchAttempts < 3) { 
+              const year = Math.floor(Math.random() * (1940 - 500 + 1)) + 500; 
+              process.stdout.write(`[랜덤] ${year}년도 탐색... `);
+              
+              const listRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
+                  headers: WIKI_HEADERS,
+                  params: { action: "query", list: "categorymembers", cmtitle: `분류:${year}년_출생`, cmlimit: 50, cmtype: "page", format: "json", origin: "*" } 
+              });
+              
+              const candidates = listRes.data.query?.categorymembers || [];
 
-            const pages = detailRes.data.query?.pages;
-            if (!pages) continue;
-            const pageData = Object.values(pages)[0];
+              for (const cand of candidates.slice(0, 10)) { 
+                  if (QUIZ_CACHE.length >= CACHE_SIZE) break;
+                  if (/\(.*\)|목록|분류|선수|배우|가수|작가|기업|작품|드라마|영화|앨범|만화/.test(cand.title)) continue; 
 
-            if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 30) {
-                const imgUrl = pageData.thumbnail.source;
-                const isStable = await checkUrlStability(imgUrl);
-                
-                if (isStable) {
-                    console.log(`✅ [유명인] ${pickName} 통과.`);
-                    const maskedHint = createMaskedHint(pageData.title, pageData.extract);
-                    QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
-                } else {
-                    console.log(`❌ [유명인] ${pickName} 이미지 검증 실패.`);
-                }
-            }
-        }
-    }
+                  const detailRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
+                      headers: WIKI_HEADERS,
+                      params: { action: "query", titles: cand.title, prop: "pageimages|extracts", pithumbsize: 500, exintro: true, explaintext: true, format: "json", origin: "*" }
+                  });
 
-    // 2. 랜덤 연도 탐색 
-    let randomSearchAttempts = 0;
-    while (QUIZ_CACHE.length < CACHE_SIZE && randomSearchAttempts < 3) { 
-        // 🌟 [수정 완료] 탐색 연도 범위: 500년 ~ 1940년
-        const year = Math.floor(Math.random() * (1940 - 500 + 1)) + 500; 
-        process.stdout.write(`[랜덤] ${year}년도 탐색... `);
-        
-        const listRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
-            headers: WIKI_HEADERS,
-            params: { action: "query", list: "categorymembers", cmtitle: `분류:${year}년_출생`, cmlimit: 50, cmtype: "page", format: "json", origin: "*" } 
-        });
-        
-        const candidates = listRes.data.query?.categorymembers || [];
+                  const pages = detailRes.data.query?.pages;
+                  if (!pages) continue;
+                  const pageData = Object.values(pages)[0];
 
-        for (const cand of candidates.slice(0, 10)) { 
-            if (QUIZ_CACHE.length >= CACHE_SIZE) break;
-            if (/\(.*\)|목록|분류|선수|배우|가수|작가|기업|작품|드라마|영화|앨범|만화/.test(cand.title)) continue; 
+                  if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 300) { 
+                      const imgUrl = pageData.thumbnail.source;
+                      const isStable = await checkUrlStability(imgUrl);
+                      
+                      if (isStable) {
+                          console.log(`✅ [랜덤] ${pageData.title} 통과.`);
+                          const maskedHint = createMaskedHint(pageData.title, pageData.extract);
+                          QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
+                      } else {
+                          console.log(`❌ [랜덤] ${pageData.title} 이미지 검증 실패.`);
+                      }
+                  }
+              }
+              randomSearchAttempts++;
+          }
 
-            const detailRes = await axios.get(`https://ko.wikipedia.org/w/api.php`, {
-                headers: WIKI_HEADERS,
-                params: { action: "query", titles: cand.title, prop: "pageimages|extracts", pithumbsize: 500, exintro: true, explaintext: true, format: "json", origin: "*" }
-            });
-
-            const pages = detailRes.data.query?.pages;
-            if (!pages) continue;
-            const pageData = Object.values(pages)[0];
-
-            if (pageData.thumbnail?.source && pageData.extract && pageData.extract.length > 300) { 
-                const imgUrl = pageData.thumbnail.source;
-                const isStable = await checkUrlStability(imgUrl);
-                
-                if (isStable) {
-                    console.log(`✅ [랜덤] ${pageData.title} 통과.`);
-                    const maskedHint = createMaskedHint(pageData.title, pageData.extract);
-                    QUIZ_CACHE.push({ name: pageData.title, image: imgUrl, hint: maskedHint, description: pageData.extract });
-                } else {
-                    console.log(`❌ [랜덤] ${pageData.title} 이미지 검증 실패.`);
-                }
-            }
-        }
-        randomSearchAttempts++;
-    }
-
-  } catch (e) {
-    console.error("채굴 중 오류:", e.message);
-  } finally {
-    isCaching = false;
-    if (QUIZ_CACHE.length < 5) setTimeout(fillCache, 3000); 
-  }
+      } catch (e) {
+          console.error("채굴 중 오류:", e.message);
+      } finally {
+          isCaching = false;
+          if (QUIZ_CACHE.length < 5) setTimeout(fillCache, 3000); 
+          resolve();
+      }
+  });
+  
+  return cachePromise; 
 }
 
 fillCache(); 
 
 // --- API ---
 app.get("/api/quiz", async (req, res) => {
-  try { // 🌟 CRITICAL FIX: 전체 API 로직을 try/catch로 감싸서 500 에러 발생 시 JSON 응답 보장
+  try {
+    // 🌟 [수정] 간단한 고유 요청 ID 생성
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`; 
+    console.log(`[Request] New request: ${requestId}`);
+
+    // 🌟 [수정] 캐싱 작업 중이라면 완료될 때까지 대기 (503 방지)
+    if (isCaching && cachePromise) {
+        await cachePromise; 
+    }
+
     if (callCount >= DAILY_LIMIT) {
-      return res.status(429).json({ error: "오늘 호출 한도 초과" });
+      return res.status(429).json({ error: "오늘 호출 한도 초과", requestId });
     }
   
-    const sessionId = req.query.sessionId || `session_${Date.now()}_${Math.random()}`;
     callCount++;
-    sessionCounts[sessionId] = (sessionCounts[sessionId] || 0) + 1; 
-
-    if (QUIZ_CACHE.length === 0) await fillCache();
+  
+    // 캐시가 비어있으면 다시 채우고, 채워질 때까지 다시 대기 
+    if (QUIZ_CACHE.length === 0) {
+        await fillCache(); 
+        await cachePromise;
+    }
   
     const item = QUIZ_CACHE.shift();
   
     if (!item) {
         fillCache(); 
-        // 퀴즈 데이터가 없으면 JSON 형식의 503 응답
-        return res.status(503).json({ error: "데이터 준비 중입니다. 잠시만 기다려주세요." });
+        return res.status(503).json({ error: "데이터 준비 중입니다. 잠시만 기다려주세요.", requestId });
     }
 
     if (QUIZ_CACHE.length < CACHE_SIZE / 2) fillCache();
@@ -232,19 +241,18 @@ app.get("/api/quiz", async (req, res) => {
       ...item, 
       imageUrl: item.image, 
       remaining: DAILY_LIMIT - callCount, 
-      questionNumber: sessionCounts[sessionId],
-      sessionId 
+      // 🌟 [수정] 요청 ID를 응답에 포함
+      requestId 
     });
 
   } catch (error) {
     console.error("API 퀴즈 처리 중 심각한 오류 발생:", error);
-    // 예상치 못한 오류 발생 시 JSON 형식의 500 응답
-    res.status(500).json({ error: "서버 내부 오류로 퀴즈를 불러올 수 없습니다." });
+    const errorId = `err_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`; 
+    res.status(500).json({ error: "서버 내부 오류로 퀴즈를 불러올 수 없습니다.", errorId });
   }
 });
 
 // --- 정적 ---
-// Vercel의 routes 설정이 정적 파일을 처리하므로 로컬 테스트용으로만 유지
 app.use(express.static(path.join(process.cwd(), "public")));
 app.get("/", (req, res) => res.sendFile(path.join(process.cwd(), "public", "index.html")));
 
